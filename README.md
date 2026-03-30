@@ -40,7 +40,7 @@ cd judgment-pool/backend
 npm install
 cp ../.env.example .env     # 改一下 JWT_SECRET
 node src/db/migrate.js
-PORT=3000 node src/index.js
+PORT=7473 node src/index.js
 ```
 
 ### Docker 一键启动
@@ -188,11 +188,11 @@ sudo dnf install -y nodejs npm git
 git clone https://github.com/yyarrow/judgment-pool.git
 cd judgment-pool/backend
 npm install
-JWT_SECRET=your-random-secret PORT=3000 node src/db/migrate.js
-JWT_SECRET=your-random-secret PORT=3000 nohup node src/index.js &
+JWT_SECRET=your-random-secret PORT=7473 node src/db/migrate.js
+JWT_SECRET=your-random-secret PORT=7473 nohup node src/index.js &
 ```
 
-安全组只需开内网 CIDR 的 3000 端口，数据存在 `data/judgment_pool.db`。
+安全组只需开内网 CIDR 的 7473 端口，数据存在 `data/judgment_pool.db`。
 
 ---
 
@@ -200,7 +200,7 @@ JWT_SECRET=your-random-secret PORT=3000 nohup node src/index.js &
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| PORT | 3000 | 服务端口 |
+| PORT | 7473 | 服务端口 |
 | JWT_SECRET | ⚠️ 必须修改 | JWT 签名密钥 |
 | DB_PATH | ./data/judgment_pool.db | SQLite 文件路径 |
 | INITIAL_CREDITS | 100 | 新用户初始 Credits |

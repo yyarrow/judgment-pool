@@ -2,10 +2,33 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
+const path = require('path');
+const fs = require('fs');
 const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
 const db = require('./db');
+
+// ── File Upload Setup ─────────────────────────────────────────────────────────
+const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+const storage = multer.diskStorage({
+  destination: UPLOADS_DIR,
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `${Date.now()}-${uuidv4().slice(0, 8)}${ext}`);
+  },
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only image files are allowed'));
+  },
+});
 
 const app = express();
 const server = http.createServer(app);
@@ -69,19 +92,27 @@ wss.on('connection', (ws, req) => {
 // ── Middleware ────────────────────────────────────────────────────────────────
 app.use(cors());
 app.use(express.json());
+app.use('/uploads', express.static(UPLOADS_DIR));
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/users', require('./routes/users'));
 
-app.get('/api/health', (_, res) => res.json({ status: 'ok', ts: new Date().toISOString() }));
-
-// ── Error handler ─────────────────────────────────────────────────────────────
+// ── Upload Endpoint ───────────────────────────────────────────────────────────
+const authMiddleware = require('./middleware/auth');
+app.post('/api/upload', authMiddleware, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  res.json({ url: `/uploads/${req.file.filename}` });
+});
 app.use((err, req, res, _next) => {
+  if (err.message === 'Only image files are allowed')
+    return res.status(400).json({ error: err.message });
   console.error(err);
   res.status(500).json({ error: 'Internal server error' });
 });
+
+app.get('/api/health', (_, res) => res.json({ status: 'ok', ts: new Date().toISOString() }));
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;

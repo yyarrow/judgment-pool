@@ -20,6 +20,7 @@ async function migrate() {
       requester_id TEXT NOT NULL,
       assignee_id TEXT,
       status TEXT DEFAULT 'open',
+      type TEXT NOT NULL DEFAULT 'post',
       urgency TEXT DEFAULT 'normal',
       credits_offered INTEGER NOT NULL,
       rating INTEGER,
@@ -50,6 +51,10 @@ async function migrate() {
     CREATE INDEX IF NOT EXISTS idx_messages_task ON messages(task_id);
     CREATE INDEX IF NOT EXISTS idx_ledger_user ON credit_ledger(user_id);
   `);
+
+  // Idempotent column additions
+  try { await db.runAsync(`ALTER TABLE tasks ADD COLUMN attachments TEXT DEFAULT '[]'`); } catch {}
+
   console.log('✅ Database migrated:', process.env.DB_PATH || 'data/judgment_pool.db');
   db.close();
 }
