@@ -30,8 +30,11 @@ const url   = require('url');
 function parseArgs() {
   const args = process.argv.slice(2);
   const opts = {
-    url:         process.env.JP_URL    || 'http://localhost:7473',
-    token:       process.env.JP_TOKEN  || '',
+    url:         process.env.JP_URL          || 'http://localhost:7473',
+    token:       process.env.JP_TOKEN        || '',
+    email:       process.env.JP_AI_EMAIL     || '',
+    password:    process.env.JP_AI_PASSWORD  || '',
+    name:        process.env.JP_AI_NAME      || 'AI',
     title:       '',
     description: '',
     urgency:     'normal',
@@ -60,7 +63,7 @@ function parseArgs() {
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
-function request(baseUrl, path, { method = 'GET', token, body, longTimeout } = {}) {
+function requestRaw(baseUrl, path, { method = 'GET', token, body, longTimeout } = {}) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(path, baseUrl);
     const lib    = parsed.protocol === 'https:' ? https : http;
@@ -85,11 +88,7 @@ function request(baseUrl, path, { method = 'GET', token, body, longTimeout } = {
         try {
           const text = Buffer.concat(chunks).toString();
           const json = JSON.parse(text);
-          if (res.statusCode >= 400) {
-            reject(new Error(`HTTP ${res.statusCode}: ${json.error || text}`));
-          } else {
-            resolve(json);
-          }
+          resolve({ statusCode: res.statusCode, body: json });
         } catch (e) {
           reject(new Error(`Failed to parse response: ${e.message}`));
         }
@@ -103,14 +102,69 @@ function request(baseUrl, path, { method = 'GET', token, body, longTimeout } = {
   });
 }
 
+async function request(baseUrl, path, opts = {}) {
+  const { statusCode, body } = await requestRaw(baseUrl, path, opts);
+  if (statusCode >= 400) throw new Error(`HTTP ${statusCode}: ${body.error || JSON.stringify(body)}`);
+  return body;
+}
+
+// ── Auto-auth: login, or register then login ──────────────────────────────────
+async function autoAuth(opts) {
+  const { url: baseUrl, email, password, name } = opts;
+
+  // Try login first
+  const loginRes = await requestRaw(baseUrl, '/api/auth/login', {
+    method: 'POST',
+    body: { email, password },
+  });
+
+  if (loginRes.statusCode === 200) {
+    process.stderr.write(`🔑 Logged in as ${email}\n`);
+    return loginRes.body.token;
+  }
+
+  if (loginRes.statusCode !== 401 && loginRes.statusCode !== 400) {
+    throw new Error(`Login failed: HTTP ${loginRes.statusCode}: ${loginRes.body.error || JSON.stringify(loginRes.body)}`);
+  }
+
+  // Login failed → try to register
+  process.stderr.write(`📝 Account not found, registering ${email}…\n`);
+  const regRes = await requestRaw(baseUrl, '/api/auth/register', {
+    method: 'POST',
+    body: { email, password, name: name || 'AI' },
+  });
+
+  if (regRes.statusCode !== 200 && regRes.statusCode !== 201) {
+    throw new Error(`Registration failed: HTTP ${regRes.statusCode}: ${regRes.body.error || JSON.stringify(regRes.body)}`);
+  }
+
+  process.stderr.write(`✅ Registered AI account, logging in…\n`);
+
+  // Login after registration
+  const login2Res = await requestRaw(baseUrl, '/api/auth/login', {
+    method: 'POST',
+    body: { email, password },
+  });
+
+  if (login2Res.statusCode !== 200) {
+    throw new Error(`Post-register login failed: HTTP ${login2Res.statusCode}: ${login2Res.body.error}`);
+  }
+
+  return login2Res.body.token;
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 async function main() {
   const opts = parseArgs();
 
   if (!opts.token) {
-    process.stderr.write('Error: JP_TOKEN env var or --token argument is required\n');
-    process.exit(1);
+    if (!opts.email || !opts.password) {
+      process.stderr.write('Error: provide JP_TOKEN, or JP_AI_EMAIL + JP_AI_PASSWORD for auto-auth\n');
+      process.exit(1);
+    }
+    opts.token = await autoAuth(opts);
   }
+
   if (!opts.title || !opts.description) {
     process.stderr.write('Error: --title and --description are required\n');
     process.exit(1);
