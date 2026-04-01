@@ -31,8 +31,8 @@ const { z }          = require('zod');
 const https          = require('https');
 const http           = require('http');
 
-// ── HTTP helper (no external deps) ───────────────────────────────────────────
-function apiRequest(baseUrl, path, { method = 'GET', token, body, socketTimeout } = {}) {
+// ── HTTP helpers ──────────────────────────────────────────────────────────────
+function requestRaw(baseUrl, path, { method = 'GET', token, body, socketTimeout } = {}) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(path, baseUrl);
     const lib    = parsed.protocol === 'https:' ? https : http;
@@ -57,11 +57,7 @@ function apiRequest(baseUrl, path, { method = 'GET', token, body, socketTimeout 
         try {
           const text = Buffer.concat(chunks).toString();
           const json = JSON.parse(text);
-          if (res.statusCode >= 400) {
-            reject(new Error(`HTTP ${res.statusCode}: ${json.error || text}`));
-          } else {
-            resolve(json);
-          }
+          resolve({ statusCode: res.statusCode, body: json });
         } catch (e) {
           reject(new Error(`Failed to parse API response: ${e.message}`));
         }
@@ -75,12 +71,65 @@ function apiRequest(baseUrl, path, { method = 'GET', token, body, socketTimeout 
   });
 }
 
+async function apiRequest(baseUrl, path, opts = {}) {
+  const { statusCode, body } = await requestRaw(baseUrl, path, opts);
+  if (statusCode >= 400) throw new Error(`HTTP ${statusCode}: ${body.error || JSON.stringify(body)}`);
+  return body;
+}
+
+// ── Auto-auth: resolve token once at startup ──────────────────────────────────
+let _cachedToken = '';
+
+async function resolveToken() {
+  if (process.env.JP_TOKEN) return process.env.JP_TOKEN;
+
+  const baseUrl  = process.env.JP_URL          || 'http://localhost:7473';
+  const email    = process.env.JP_AI_EMAIL    || '';
+  const password = process.env.JP_AI_PASSWORD || '';
+  const name     = process.env.JP_AI_NAME     || 'AI';
+
+  if (!email || !password) {
+    throw new Error('Set JP_TOKEN, or JP_AI_EMAIL + JP_AI_PASSWORD in the MCP env.');
+  }
+
+  // Try login
+  const loginRes = await requestRaw(baseUrl, '/api/auth/login', {
+    method: 'POST', body: { email, password },
+  });
+
+  if (loginRes.statusCode === 200) {
+    process.stderr.write(`🔑 Logged in as ${email}\n`);
+    return loginRes.body.token;
+  }
+
+  if (loginRes.statusCode !== 401 && loginRes.statusCode !== 400) {
+    throw new Error(`Login failed: HTTP ${loginRes.statusCode}: ${loginRes.body.error}`);
+  }
+
+  // Auto-register
+  process.stderr.write(`📝 Registering AI account ${email}…\n`);
+  const regRes = await requestRaw(baseUrl, '/api/auth/register', {
+    method: 'POST', body: { email, password, name },
+  });
+  if (regRes.statusCode !== 200 && regRes.statusCode !== 201) {
+    throw new Error(`Registration failed: HTTP ${regRes.statusCode}: ${regRes.body.error}`);
+  }
+
+  // Login after register
+  const login2 = await requestRaw(baseUrl, '/api/auth/login', {
+    method: 'POST', body: { email, password },
+  });
+  if (login2.statusCode !== 200) {
+    throw new Error(`Post-register login failed: HTTP ${login2.statusCode}`);
+  }
+  process.stderr.write(`✅ Registered and logged in as ${email}\n`);
+  return login2.body.token;
+}
+
 // ── ask_human implementation ──────────────────────────────────────────────────
 async function askHuman({ title, description, urgency, credits, pollTimeout, maxWait }) {
-  const baseUrl = process.env.JP_URL   || 'http://localhost:7473';
-  const token   = process.env.JP_TOKEN || '';
-
-  if (!token) throw new Error('JP_TOKEN is not set. Configure it in the MCP env.');
+  const baseUrl = process.env.JP_URL || 'http://localhost:7473';
+  const token   = _cachedToken;
 
   // 1. Post the task
   const taskData = await apiRequest(baseUrl, '/api/tasks', {
@@ -186,8 +235,14 @@ server.tool(
 );
 
 // ── Start ─────────────────────────────────────────────────────────────────────
-const transport = new StdioServerTransport();
-server.connect(transport).catch(e => {
+async function start() {
+  _cachedToken = await resolveToken();
+  process.stderr.write(`🔐 auth OK — judgment-pool MCP ready\n`);
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+start().catch(e => {
   process.stderr.write(`MCP server error: ${e.message}\n`);
   process.exit(1);
 });

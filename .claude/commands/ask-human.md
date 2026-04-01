@@ -24,7 +24,8 @@ When this command is invoked:
 
 ```bash
 cd /Users/yuanyan/Work/judgment-pool/backend && \
-JP_TOKEN=$JP_TOKEN node skills/ask-human.js \
+JP_AI_EMAIL=claude@ai.local JP_AI_PASSWORD=judgepool2024 \
+  node skills/ask-human.js \
   --title "$TITLE" \
   --description "$DESCRIPTION" \
   --urgency normal \
@@ -38,8 +39,9 @@ JP_TOKEN=$JP_TOKEN node skills/ask-human.js \
 
 ## Environment
 
-- `JP_TOKEN` must be set (JWT token for claude@ai.local account)
-- Backend must be running at `http://localhost:7473`
+- `JP_AI_EMAIL` + `JP_AI_PASSWORD` for auto-register/login (default: claude@ai.local / judgepool2024)
+- Or set `JP_TOKEN` directly to skip auto-auth
+- Backend must be running at `http://localhost:7473` (default)
 
 ## Example
 
